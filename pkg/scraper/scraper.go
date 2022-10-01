@@ -3,6 +3,8 @@ package scraper
 import (
 	"fmt"
 	"log"
+	"strconv"
+	"strings"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
@@ -12,7 +14,10 @@ import (
 )
 
 type Item struct {
-	URL string
+	Title string
+	URL   string
+	City  string
+	Price int
 }
 
 func HandleRequest() {
@@ -27,6 +32,7 @@ func HandleRequest() {
 	// Create DynamoDB client
 	svc := dynamodb.New(sess)
 
+	// Instantiate default collector
 	c := colly.NewCollector()
 
 	c.OnRequest(func(r *colly.Request) {
@@ -37,11 +43,21 @@ func HandleRequest() {
 		log.Println("Something went wrong:", err)
 	})
 
+	// On every element which has class "result-row" call callback
 	c.OnHTML(".result-row", func(e *colly.HTMLElement) {
+		price, err := strconv.Atoi(normalizePrice(e.ChildText(".result-price")))
+		if err != nil {
+			log.Println("Error parsing price:", err)
+			return
+		}
 		item := Item{
-			URL: e.ChildText(".result-title"),
+			Title: e.ChildText(".result-title"),
+			URL:   e.ChildAttr("a.result-title", "href"),
+			City:  "Kitchener",
+			Price: price,
 		}
 
+		// Convert the item to AttributeValues.
 		av, err := dynamodbattribute.MarshalMap(item)
 		if err != nil {
 			log.Fatalf("Got error marshalling new listing item: %s", err)
@@ -65,4 +81,9 @@ func HandleRequest() {
 	})
 
 	c.Visit("https://kitchener.craigslist.org/search/apa")
+}
+
+// normalizePrice removes the dollar sign and commas from a price string.
+func normalizePrice(price string) string {
+	return strings.ReplaceAll(strings.ReplaceAll(price, "$", ""), ",", "")
 }
